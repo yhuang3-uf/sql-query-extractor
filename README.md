@@ -1,10 +1,16 @@
 # SQL Query Extractor
-Extracts SQL queries
+Extracts SQL queries from the source code of various programs. Specifically tuned to avoid false positives as much as possible.
 
 ## Prerequisities
  - Python 3.9+
 
 ## Supported languages
+
+## Methodology
+This project is comprised of three parts:
+1. A *controller* which identifies the programming language fed in. It also handles outputting in a format that is ingestible by automated tools.
+2. An *extractor* which extracts strings from the source code of programs in a specific language. It statically analyzes program syntax for strings.
+3. An *parser* which parses the strings using the SQL context-free grammar to see whether they are valid SQL. The ANSI SQL standard will be followed in this case. SQL extensions that are specific to certain flavors (PostgreSQL, Oracle SQL, etc.) are not supported.
 
 ## License
 ```
