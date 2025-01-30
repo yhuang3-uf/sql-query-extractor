@@ -16,4 +16,10 @@ def check_valid(sql_query: str) -> bool:
     :return: The input string.
     :raises SqlSyntaxError: IF the syntax of the query is invalid
     """
-    pass
+    tempdb: sqlite3.Connection = sqlite3.connect(":memory:")
+    try:
+        tempdb.execute(sql_query)
+    except sqlite3.OperationalError as e:
+        if "syntax error" in str(e):
+            return False
+    return True
