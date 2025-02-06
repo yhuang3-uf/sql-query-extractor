@@ -4,7 +4,19 @@ Extracts SQL queries from the source code of various programs. Specifically tune
 ## Prerequisities
  - Python 3.9+
 
+## Usage
+Here's an example of how to run the command:
+```
+python3 extractqueries.py --process-count <NUMBER OF PROCESSES> <INPUT DIRECTORY> <OUTPUT CSV FILE>
+```
+You can always run
+```
+python3 extractqueries.py -h
+```
+for more information and more options. 
+
 ## Supported languages
+ - [x] Python
 
 ## Methodology
 This project is comprised of three parts:
