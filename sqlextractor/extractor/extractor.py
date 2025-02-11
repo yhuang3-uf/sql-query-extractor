@@ -107,6 +107,8 @@ class PythonExtractor(Extractor):
                 # Find the last line break
                 last_line_break = token[4]
                 next_line_break = token[4]
+                if token[4] >= len(self.source):
+                    raise ParsingError(token[2], "", 0, "Potential unterminated string literal")
                 while last_line_break > 0 and self.source[last_line_break] != '\n':
                     last_line_break -= 1
                 while next_line_break < len(self.source) - 1 and self.source[next_line_break] != '\n':
@@ -219,6 +221,7 @@ class PythonExtractor(Extractor):
                 if close_string_char in ("\"", "'"):
                     # Check for triple quote
                     if self.source[index] == close_string_char and \
+                            index+1 < len(self.source) and \
                             self.source[index+1] == close_string_char:
                         # This is a triple quoted string
                         triple_string = True

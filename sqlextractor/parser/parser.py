@@ -26,9 +26,11 @@ def check_valid(sql_query: str) -> bool:
         # All-semicolon strings are, while technically valid SQL, not helpful either.
         return False
     # First, manually filter out commands that might mess with the SQLITE database
-    if sql_query.lower() in ("end", "vacuum", "commit", "commit;", "begin", "rollback"):
+    if sql_query.lower() in ("end", "vacuum", "begin", "rollback", "rollback;"):
         return False
     if "vacuum" == sql_query.lower()[:6]:
+        return False
+    if "commit" == sql_query.lower()[:6]:
         return False
 
     tempdb: sqlite3.Connection = sqlite3.connect(":memory:")
@@ -46,13 +48,25 @@ def check_valid(sql_query: str) -> bool:
             return True
         elif "no such table" in str(e):
             return True
+        elif "no such index" in str(e):
+            return True
+        elif "no such view" in str(e):
+            return True
+        elif "no such savepoint" in str(e):
+            return True
         elif "no such function" in str(e):
             # TODO Mark as False in the future once you implement concat
-            return True
+            return False
         elif "no tables specified" in str(e):
             # TODO Mark as False in the future once you implement concat
             return False
         elif "no such column" in str(e):
+            return True
+        elif "unknown table option" in str(e):
+            # This is valid SQL in other dialects, but not in SQLite.
+            return False
+        elif "not currently supported" in str(e):
+            # This indicates features that might be supported in future vesions of SQLite
             return True
         print(sql_query)
         raise e
