@@ -1,4 +1,5 @@
 import sqlite3
+import sys
 # TODO Run the input string through SQLite and check for
 # a syntax error.
 
@@ -35,7 +36,15 @@ def check_valid(sql_query: str) -> bool:
 
     tempdb: sqlite3.Connection = sqlite3.connect(":memory:")
     try:
-        tempdb.execute(sql_query)
+        try:
+            tempdb.execute(sql_query)
+        except sqlite3.Warning as e:
+            if "SQL is of wrong type" in str(e):
+                print("SQL query is of wrong type: " + repr(sql_query), file=sys.stderr)
+                return False
+            if "You can only execute one statement at a time" not in str(e):
+                raise e
+        tempdb.executescript(sql_query)
     except sqlite3.OperationalError as e:
         if "syntax error" in str(e):
             return False
@@ -46,13 +55,24 @@ def check_valid(sql_query: str) -> bool:
             return False
         elif "unknown database" in str(e):
             return True
+        elif "duplicate column name" in str(e):
+            # Possibly a prepared statement/format string
+            return True
+        elif "no such collation sequence" in str(e):
+            return True
         elif "no such table" in str(e):
             return True
+        elif "no such database" in str(e):
+            return True
         elif "no such index" in str(e):
+            return True
+        elif "no such trigger" in str(e):
             return True
         elif "no such view" in str(e):
             return True
         elif "no such savepoint" in str(e):
+            return True
+        elif "already exists" in str(e):
             return True
         elif "no such function" in str(e):
             # TODO Mark as False in the future once you implement concat
@@ -68,7 +88,16 @@ def check_valid(sql_query: str) -> bool:
         elif "not currently supported" in str(e):
             # This indicates features that might be supported in future vesions of SQLite
             return True
-        print(sql_query)
+        elif "not authorized" in str(e):
+            # SQL query valid, but not allowed in current context
+            return True
+        elif "cannot commit - no transaction is active" in str(e):
+            return True
+        elif "table" in str(e) and "may not be modified" in str(e):
+            return True
+        elif "database" in str(e) and "already in use" in str(e):
+            return True
+        print("Got unknown error when processing SQL query: " + str(sql_query), file=sys.stderr)
         raise e
     except sqlite3.ProgrammingError as e:
         if "contains a null character" in str(e):

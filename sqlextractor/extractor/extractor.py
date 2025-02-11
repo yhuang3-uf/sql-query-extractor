@@ -218,6 +218,9 @@ class PythonExtractor(Extractor):
                 triple_string: bool = False
                 """Whether the string is a triple-quoted string"""
                 index += 1
+                if index >= len(self.source):
+                    raise ParsingError(line_number, self.source[last_line_break:], len(self.source) - 1, 
+                                       "Unterminated string literal")
                 if close_string_char in ("\"", "'"):
                     # Check for triple quote
                     if self.source[index] == close_string_char and \
