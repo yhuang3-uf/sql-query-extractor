@@ -66,6 +66,8 @@ def check_valid(sql_query: str) -> bool:
             return True
         elif "no such index" in str(e):
             return True
+        elif "no such module" in str(e):
+            return True
         elif "no such trigger" in str(e):
             return True
         elif "no such view" in str(e):
@@ -82,6 +84,8 @@ def check_valid(sql_query: str) -> bool:
             return False
         elif "no such column" in str(e):
             return True
+        elif "unable to open database" in str(e):
+            return True
         elif "unknown table option" in str(e):
             # This is valid SQL in other dialects, but not in SQLite.
             return False
@@ -93,12 +97,21 @@ def check_valid(sql_query: str) -> bool:
             return True
         elif "cannot commit - no transaction is active" in str(e):
             return True
+        elif "unknown or unsupported join type" in str(e):
+            # SQLite may not support this join type, but other flavors might.
+            return True
         elif "table" in str(e) and "may not be modified" in str(e):
             return True
         elif "database" in str(e) and "already in use" in str(e):
             return True
+        elif "cannot rollback" in str(e):
+            # Rollback failed - probably this is a valid query.
+            return True
+
+        # Since we've covered ~99% of cases already, we'll just return False and not bother.
         print("Got unknown error when processing SQL query: " + str(sql_query), file=sys.stderr)
-        raise e
+        print("The error is \"" + str(e) + "\"", file=sys.stderr)
+        return False
     except sqlite3.ProgrammingError as e:
         if "contains a null character" in str(e):
             # Not valid SQL
@@ -108,5 +121,7 @@ def check_valid(sql_query: str) -> bool:
             return True
         else:
             # Well, we weren't expecting this...
-            raise e
+            print("Got unknown error when processing SQL query: " + str(sql_query), file=sys.stderr)
+            print("The error is \"" + str(e) + "\"", file=sys.stderr)
+            return False
     return True
