@@ -1,7 +1,5 @@
 import sqlite3
 import sys
-# TODO Run the input string through SQLite and check for
-# a syntax error.
 
 class SqlSyntaxError(RuntimeError):
     """
@@ -9,6 +7,22 @@ class SqlSyntaxError(RuntimeError):
     """
     def __init__(self) -> None:
         pass
+
+def check_valid_pglast(sql_query: str) -> bool:
+    """
+    Checks whether an SQL query has valid syntax using the `pglast` module.
+
+    Requires `pglast` to be installed
+
+    :return: True if SQL is valid, False if not.
+    """
+    import pglast
+    try:
+        pglast.parse_sql(sql_query)
+    except pglast.parser.ParseError:
+        # Oops, parsing failed.
+        return False
+    return True
 
 def check_valid(sql_query: str) -> bool:
     """
