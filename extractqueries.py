@@ -65,7 +65,7 @@ def worker_process(file_queue: multiprocessing.Queue,
                         for program_string in program_strings:
                             # Strip the whitespace from the string.
                             program_string = program_string.strip()
-                            if sqlextractor.parser.parser.check_valid(program_string):
+                            if sqlextractor.parser.parser.check_valid_pglast_postgres(program_string):
                                 sql_strings.append(program_string)
                         for sql_string in sql_strings:
                             sql_query_queue.put((bigquery_result["repo_name"], bigquery_result["path"], sql_string))
@@ -170,6 +170,10 @@ def main(argv: list[str]) -> int:
                     outputcsvwriter.writerow(sql_query_row)
                 except queue.Empty:
                     break
+                except Exception as e:
+                    # Some characters (usually foreign language characters in usernames or repo names) throw an error when trying to be written to file.
+                    print(sql_query_row)
+                    print (e)
     
     # Start all the subprocesses
     for process in worker_processes:
