@@ -65,11 +65,7 @@ def worker_process(file_queue: multiprocessing.Queue,
                         for program_string in program_strings:
                             # Strip the whitespace from the string.
                             program_string = program_string.strip()
-<<<<<<< HEAD
-                            if sqlextractor.parser.parser.check_valid_pglast(program_string):
-=======
                             if sqlextractor.parser.parser.check_valid_pglast_postgres(program_string):
->>>>>>> cad7f0033c013b5366b74207b009cff63f92b1b9
                                 sql_strings.append(program_string)
                         for sql_string in sql_strings:
                             sql_query_queue.put((bigquery_result["repo_name"], bigquery_result["path"], sql_string))
