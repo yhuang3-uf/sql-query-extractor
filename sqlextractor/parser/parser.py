@@ -16,7 +16,18 @@ def check_valid_pglast(sql_query: str) -> bool:
 
     :return: True if SQL is valid, False if not.
     """
-    import pglast
+    if sql_query.strip() == "":
+        # Empty strings, while technically valid SQL, are not helpful for the
+        # purposes of this project.
+        return False
+    if sql_query.lstrip()[:2] in ("--", "/*") or sql_query.lstrip()[0] == "#":
+        # All-comment SQL strings are useless as well.
+        return False
+    if sql_query.replace(";", "").strip() == "":
+        # All-semicolon strings are, while technically valid SQL, not helpful either.
+        return False
+    # TODO Filter out other statements like "begin" and "end" which are not useful
+    import pglast  # type: ignore[import-untyped]
     try:
         pglast.parse_sql(sql_query)
     except pglast.parser.ParseError:
