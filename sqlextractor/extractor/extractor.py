@@ -28,6 +28,8 @@ class Extractor:
     """Identifier-like constructs"""
     TOKEN_STRING: str = "string"
     """Represents a string literal"""
+    TOKEN_NEWLINE: str = "newline"
+    """Represents a newline"""
     TOKEN_UNKNOWN: str = "unknown"
     """Represents an unknown token"""
 
@@ -87,6 +89,10 @@ class Extractor:
         extractor: typing.Optional[Extractor] = None
         if file_extension == ".py":
             extractor = PythonExtractor(content)
+        elif file_extension == ".js":
+            extractor = JavaScriptExtractor(content)
+        elif file_extension == ".php":
+            extractor = PHPExtractor(content)
         else:
             raise ValueError("Unknown file type \"" + file_extension + "\"")
         assert extractor is not None
@@ -297,3 +303,497 @@ class PythonExtractor(Extractor):
                 index += 1
         
         return tokens_list
+
+class JavaScriptExtractor(Extractor):
+    """
+    Extracts strings from JavaScript files
+    """
+    def parse(self, tokens: list[tuple[str, str, int, int, int]]) -> list[str]:
+        strings: list[str] = []
+        i: int = 0
+
+        while i < len(tokens):
+            current_string: str = ""
+
+            while i < len(tokens):
+                if tokens[i][0] == (self.TOKEN_STRING):
+                    current_string += tokens[i][1]
+                else:
+                    # Not a string, let's loop again.
+                    break
+                
+                # Advance to the next token
+                i += 1
+                if i >= len(tokens):
+                    # We've reached the end.
+                    break
+
+                table_number: int = 1
+                placeholder_number: int = 1
+
+                # Loop through concatenation
+                while i < len(tokens) and tokens[i][0] in (self.TOKEN_ADD):
+                    string_to_append: str = ""
+
+                    if (i+1 >= len(tokens)):
+                        break
+                    elif (tokens[i+1][0] == self.TOKEN_NEWLINE): # Add newline to string
+                        current_string += "\n"
+                        i += 1
+                        while tokens[i+1][0] == self.TOKEN_NEWLINE:
+                            i += 1
+                    
+                    if (i+1 >= len(tokens)):
+                        break
+                    elif (tokens[i+1][0] == self.TOKEN_IDENTIFIER): # Add tbl or placeholder to string in place of concatenated identifier
+                        while i+1 < len(tokens) and tokens[i+1][0] == self.TOKEN_IDENTIFIER:
+                            i += 1
+                        
+                        current_string_rstrip = current_string.rstrip()
+                        if (current_string_rstrip.upper().endswith(tuple(["FROM", "UPDATE", "INTO", "TABLE" , "JOIN", "TABLE IF NOT EXISTS"]))):
+                            string_to_append = "tbl" + str(table_number)
+                            table_number += 1
+                        else:
+                            string_to_append = "placeholder" + str(placeholder_number)
+                            placeholder_number += 1
+
+                    elif (tokens[i+1][0] == self.TOKEN_STRING): # append string to string
+                        string_to_append = tokens[i+1][1]
+                        i += 1
+                    
+                    current_string += string_to_append
+                    i += 1
+                    
+            # Add the current string to the list, if it is nonempty
+            if current_string != "":
+                strings.append(current_string)
+
+            i += 1
+        
+        # Filter out/prepare strings
+        filtered_strings = []
+        for string in strings:
+            # Check for valid postgres
+            if (string.find(" ") != -1 and len(string) > 5):
+                string = string.replace("\\\"", "\"")
+                string = string.replace ("\\'", "'")
+                string = string.replace("?", "'placeholder_value'")
+
+                upper = string.upper()
+
+                if (self.check_sql_keyword(string)) \
+                    and len(string) < 1000 and string.find("<") != 0 and \
+                    upper != "SELECT ALL" and string.find(" ") != -1 and upper != "SHOW ALL" and \
+                    upper != "LOCK RATIO" and upper != "LOCK UNLOCK":
+                        filtered_strings.append(string)
+        
+        return filtered_strings
+
+    def tokenize(self) -> list[tuple[str, str, int, int, int]]:
+        tokens_list: list[tuple[str, str, int, int, int]] = []
+        
+        index: int = 0
+        """The index we are at in the source code"""
+        
+        last_line_break: int = 0
+        """The last time we had a line break"""
+
+        line_number: int = 0
+        """The line number we are at in the source code"""
+
+        # Find keywords
+        next_index = self.find_next_keyword(index)
+
+        while next_index != None and index < len(self.source):
+            index = next_index - 1
+
+            while index < len(self.source):
+                if self.source[index:index+2] == ("//"):
+                    # Inside a single-line comment
+                    while index < len(self.source) and self.source[index] != '\n':
+                        index += 1
+                    line_number += 1
+                    last_line_break = index
+                elif self.source[index:index+2] == ("/*"):    
+                    # Inside a block comment
+                    while index < len(self.source) and self.source[index:index+2] != ("*/"):
+                        if (self.source[index] != '\n'):
+                            index += 1
+                        else:
+                            line_number += 1
+                            last_line_break = index
+                            index += 1               
+                elif self.source[index] == '+':
+                    # Addition token
+                    index += 1
+                    tokens_list.append((self.TOKEN_ADD, '+', line_number, 
+                                        index - last_line_break, index))
+                elif self.source[index] in ("\"", "\'"):
+                    # Normal string with escapes
+                    close_string_char: str = self.source[index]
+                    index += 1
+                    if index >= len(self.source):
+                        raise ParsingError(line_number, self.source[last_line_break:], len(self.source) - 1, 
+                                        "Unterminated string literal")
+                    current_string: str = ""
+                    start_index = index
+                    while index < len(self.source):
+                        if self.source[index] == close_string_char:
+                            # The string is finished
+                            index += 1
+                            break
+                        if self.source[index] == "\\":
+                            # Start of an escape sequence
+                            index += 2
+                        else:
+                            index += 1
+
+                    current_string = self.source[start_index:index-1]
+                    tokens_list.append((self.TOKEN_STRING, current_string, line_number, 
+                                        index - last_line_break, index))
+                elif re.match(r"[A-Za-z_().$0-9]", self.source[index]):
+                    # This is an identifier
+                    current_identifier: str = "" #self.source[index]
+                    start_index = index
+                    index += 1
+                    while index < len(self.source) and re.match(r"[A-Za-z.()0-9_]", self.source[index]):
+                        index += 1
+                    current_identifier = self.source[start_index:index]
+
+                    #print(current_identifier)
+                    tokens_list.append((self.TOKEN_IDENTIFIER, current_identifier, line_number, 
+                                        index - last_line_break, index))
+                elif self.source[index] in ('\n'):
+                    tokens_list.append((self.TOKEN_NEWLINE, "\n", line_number, 
+                                        index - last_line_break, index))
+                    line_number += 1
+                    index += 1
+                elif self.source[index] in (' ', '\t', '\r'):
+                    # A space is not a token (we ignore indents for now)
+                    index += 1
+                else:
+                    # Unknown token
+                    tokens_list.append((self.TOKEN_UNKNOWN, self.source[index], line_number,
+                                        index - last_line_break, index))
+                    index += 1
+                    break;
+            if index == next_index:
+                index += 1
+            next_index = self.find_next_keyword(index)
+
+        return tokens_list
+
+
+    def find_next_keyword(self, index):
+        # Finds index of next SQL keyword
+
+        # List of SQL keywords that can start a statement in PostgreSQL
+        sql_keywords = [
+            "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE",
+            "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "PREPARE TRANSACTION", "GRANT", "REVOKE",
+            "LOCK", "ANALYZE", "EXPLAIN", "DISCARD", "SET", "RESET", "SHOW", "VACUUM", "CHECKPOINT",
+            "CLUSTER", "REINDEX", "LISTEN", "NOTIFY", "UNLISTEN", "DO"
+        ]
+        
+        # regex pattern that matches any of these keywords
+        pattern = re.compile(r'\b(' + '|'.join(sql_keywords) + r')\b', re.IGNORECASE)
+        
+        match = pattern.search(self.source[index:])
+        
+        return match.start() + index if match else None
+
+    def check_sql_keyword(self, string):
+        # Checks if string has a SQL keyword
+
+        # List of SQL keywords that can start a statement in PostgreSQL
+        sql_keywords = [
+            "SELECT ", "WITH ", "INSERT ", "UPDATE ", "DELETE ", "MERGE ", "CREATE ", "ALTER ", "DROP ", "TRUNCATE ",
+            "BEGIN ", "COMMIT ", "ROLLBACK ", "SAVEPOINT ", "RELEASE ", "PREPARE TRANSACTION ", "GRANT ", "REVOKE ",
+            "LOCK ", "ANALYZE ", "EXPLAIN ", "DISCARD ", "SET ", "RESET ", "SHOW ", "VACUUM ", "CHECKPOINT ",
+            "CLUSTER ", "REINDEX ", "LISTEN ", "NOTIFY ", "UNLISTEN ", "DO "
+        ]
+        
+        #pattern that matches any of these keywords
+        pattern = re.compile(r'\b(' + '|'.join(sql_keywords) + r')\b', re.IGNORECASE)
+        
+        match = pattern.search(string)
+        
+        return True if match else False
+    
+class PHPExtractor(Extractor):
+    """
+    Extracts strings from JavaScript files
+    """
+    def parse(self, tokens: list[tuple[str, str, int, int, int]]) -> list[str]:
+        strings: list[str] = []
+        i: int = 0
+
+        while i < len(tokens):
+            current_string: str = ""
+
+            table_number: int = 1
+            placeholder_number: int = 1
+
+            while i < len(tokens):
+                if tokens[i][0] == (self.TOKEN_STRING):
+                    current_string += tokens[i][1]
+                else:
+                    # Not a string, let's loop again.
+                    break
+                
+                # Advance to the next token
+                i += 1
+                if i >= len(tokens):
+                    # We've reached the end.
+                    break
+
+
+                # Loop through concatenation
+                while i < len(tokens) and tokens[i][0] in (self.TOKEN_ADD):
+                    string_to_append: str = ""
+
+                    if (i+1 >= len(tokens)):
+                        break
+                    elif (tokens[i+1][0] == self.TOKEN_NEWLINE): # Add newline to string
+                        current_string += "\n"
+                        i += 1
+                        while tokens[i+1][0] == self.TOKEN_NEWLINE:
+                            i += 1
+                    
+                    if (i+1 >= len(tokens)):
+                        break
+                    elif (tokens[i+1][0] == self.TOKEN_IDENTIFIER): # Add tbl or placeholder to string in place of concatenated identifier
+                        while i+1 < len(tokens) and tokens[i+1][0] == self.TOKEN_IDENTIFIER:
+                            i += 1
+                        
+                        current_string_rstrip = current_string.rstrip()
+                        if (current_string_rstrip.upper().endswith(tuple(["FROM", "UPDATE", "INTO", "TABLE" , "JOIN", "TABLE IF NOT EXISTS"]))):
+                            string_to_append = "tbl" + str(table_number)
+                            table_number += 1
+                        else:
+                            string_to_append = "placeholder" + str(placeholder_number)
+                            placeholder_number += 1
+                        
+
+                        if (i + 3 < len(tokens) and tokens[i+1][0] == self.TOKEN_STRING and tokens[i+2][0] == self.TOKEN_UNKNOWN and tokens[i+3][0] == self.TOKEN_ADD):
+                            i += 2
+                        elif (i + 4 < len(tokens) and tokens[i+1][0] == self.TOKEN_STRING and tokens[i+2][0] == self.TOKEN_UNKNOWN and tokens[i+3][0] == self.TOKEN_IDENTIFIER and tokens[i+4][0] == self.TOKEN_ADD):
+                            i += 3
+
+                    elif (tokens[i+1][0] == self.TOKEN_STRING): # append string to string
+                        string_to_append = tokens[i+1][1]
+                        i += 1
+                    
+                    current_string += string_to_append
+                    i += 1
+                    
+            # Add the current string to the list, if it is nonempty
+            if current_string != "":
+                current_string = self.filter_query_php(current_string, table_number, placeholder_number)
+                strings.append(current_string)
+
+            i += 1
+        
+        valid = []
+        invalid = []
+        # Filter out/prepare strings
+        filtered_strings = []
+        for string in strings:
+            # Check for valid postgres
+            if (string.find(" ") != -1 and len(string) > 5):
+                string = string.replace("\\\"", "\"")
+                string = string.replace ("\\'", "'")
+                string = string.replace("?", "'placeholder_value'")
+
+                upper = string.upper()
+
+                if (self.check_sql_keyword(string)) \
+                    and len(string) < 1000 and string.find("<") != 0 and upper != "SELECT ALL":
+                        filtered_strings.append(string)
+
+        return filtered_strings
+
+    def tokenize(self) -> list[tuple[str, str, int, int, int]]:
+        tokens_list: list[tuple[str, str, int, int, int]] = []
+        
+        index: int = 0
+        """The index we are at in the source code"""
+        
+        last_line_break: int = 0
+        """The last time we had a line break"""
+
+        line_number: int = 0
+        """The line number we are at in the source code"""
+
+        # Find keywords
+        next_index = self.find_next_keyword(index)
+
+        while next_index != None and index < len(self.source):
+            index = next_index - 1
+
+            while index < len(self.source):
+                if self.source[index:index+2] == "//":
+                    # Inside a single-line comment
+                    while index < len(self.source) and self.source[index] != '\n':
+                        #print(self.source[index])
+                        index += 1
+                    line_number += 1
+                    last_line_break = index
+                elif self.source[index:index+2] == ("/*"):    
+                    # Inside a block comment
+                    while index < len(self.source) and self.source[index:index+2] != ("*/"):
+                        if (self.source[index] != '\n'):
+                            index += 1
+                        else:
+                            line_number += 1
+                            last_line_break = index
+                            index += 1               
+                elif self.source[index] == '.':
+                    # Addition token
+                    index += 1
+                    tokens_list.append((self.TOKEN_ADD, '.', line_number, 
+                                        index - last_line_break, index))
+                elif self.source[index] in ("\"", "\'"):
+                    # Normal string with escapes
+                    close_string_char: str = self.source[index]
+                    index += 1
+                    if index >= len(self.source):
+                        raise ParsingError(line_number, self.source[last_line_break:], len(self.source) - 1, 
+                                        "Unterminated string literal")
+                    current_string: str = ""
+                    start_index = index
+                    while index < len(self.source):
+                        if self.source[index] == close_string_char:
+                            # The string is finished
+                            index += 1
+                            break
+                        if self.source[index] == "\\":
+                            # Start of an escape sequence
+                            index += 2
+                        else:
+                            index += 1
+
+                    current_string = self.source[start_index:index-1]
+                    tokens_list.append((self.TOKEN_STRING, current_string, line_number, 
+                                        index - last_line_break, index))
+                elif re.match(r"[A-Za-z_()$0-9]", self.source[index]):
+                    # This is an identifier
+                    current_identifier: str = "" #self.source[index]
+                    start_index = index
+                    index += 1
+                    while index < len(self.source) and re.match(r"[A-Za-z0-9_$(){}\[\]>\-]", self.source[index]):
+                        index += 1
+                    current_identifier = self.source[start_index:index]
+
+                    tokens_list.append((self.TOKEN_IDENTIFIER, current_identifier, line_number, 
+                                        index - last_line_break, index))
+                elif self.source[index] in ('\n', '\r'):
+                    tokens_list.append((self.TOKEN_NEWLINE, "\n", line_number, 
+                                        index - last_line_break, index))
+                    line_number += 1
+                    index += 1
+                elif self.source[index] in (' ', '\t'):
+                    # A space is not a token (we ignore indents for now)
+                    index += 1
+                else:
+                    # Unknown token
+                    tokens_list.append((self.TOKEN_UNKNOWN, self.source[index], line_number,
+                                        index - last_line_break, index))
+                    index += 1
+
+                    if (self.source[index-1] != ']'):
+                        break;
+            
+            if index == next_index:
+                index += 1
+            next_index = self.find_next_keyword(index)
+
+        return tokens_list
+
+
+    def find_next_keyword(self, index):
+        # List of SQL keywords that can start a statement in PostgreSQL
+        sql_keywords = [
+            "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE",
+            "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "PREPARE TRANSACTION", "GRANT", "REVOKE",
+            "LOCK", "ANALYZE", "EXPLAIN", "DISCARD", "SET", "RESET", "SHOW", "VACUUM", "CHECKPOINT",
+            "CLUSTER", "REINDEX", "LISTEN", "NOTIFY", "UNLISTEN", "DO"
+        ]
+        
+        # Regex pattern that matches any of these keywords
+        pattern = re.compile(r'\b(' + '|'.join(sql_keywords) + r')\b', re.IGNORECASE)
+        
+        match = pattern.search(self.source[index:])
+        
+        if match:
+            keyword_index = match.start() + index
+            last_newline = self.source.rfind('\n', index, keyword_index)
+            next_newline = self.source.find('\n', keyword_index)
+            
+            next_line = self.source[last_newline:next_newline].strip()
+            if (len(next_line) > 0 and next_line[0] == '*'):
+                #print(next_line)
+                return next_newline + 1
+
+            return last_newline if last_newline != -1 else index
+        
+        return None
+
+    def check_sql_keyword(self, string):
+        # Checks if string has a SQL keyword
+
+        # List of SQL keywords that can start a statement in PostgreSQL
+        sql_keywords = [
+            "SELECT ", "WITH ", "INSERT ", "UPDATE ", "DELETE ", "MERGE ", "CREATE ", "ALTER ", "DROP ", "TRUNCATE ",
+            "BEGIN ", "COMMIT ", "ROLLBACK ", "SAVEPOINT ", "RELEASE ", "PREPARE TRANSACTION ", "GRANT ", "REVOKE ",
+            "LOCK ", "ANALYZE ", "EXPLAIN ", "DISCARD ", "SET ", "RESET ", "SHOW ", "VACUUM ", "CHECKPOINT ",
+            "CLUSTER ", "REINDEX ", "LISTEN ", "NOTIFY ", "UNLISTEN ", "DO "
+        ]
+        
+        # Pattern that matches any of these keywords
+        pattern = re.compile(r'\b(' + '|'.join(sql_keywords) + r')\b', re.IGNORECASE)
+        
+        match = pattern.search(string)
+        
+        return True if match else False
+    
+    def filter_query_php(self, string, table_number, placeholder_number):
+        # Filters queries 
+
+        # ` is not used in Postgres
+        string = string.replace("`", "'")
+
+        # : is not used in Postgres
+        string = string.replace(":", "")
+
+        # Replace variables
+        pattern = r'((\{|\$)[^\s,\'\"]+)' # {variables} or $variables in the string!
+    
+        matches = re.findall(pattern, string)
+        for match in matches:
+            string = string.replace(match[0], f"placeholder{placeholder_number}")
+            placeholder_number += 1
+        
+        # Replace %d
+        pattern = r'%d'
+        matches = re.findall(pattern, string)
+        for match in matches:
+            string = string.replace(match, f"placeholder_digit{placeholder_number}")
+            placeholder_number += 1
+        
+        # Replace %s
+        pattern = r'%s'
+        matches = re.findall(pattern, string)
+        for match in matches:
+            string = string.replace(match, f"'placeholder_string{placeholder_number}'")
+            placeholder_number += 1
+
+        # Removing '' from table names (Doesn't work in postgres)
+        pattern = r"(?<=FROM\s)'(\w+)'|(?<=JOIN\s)'(\w+)'|(?<=INTO\s)'(\w+)'|(?<=UPDATE\s)'(\w+)'|(?<=TABLE\s)'(\w+)'|(?<=TABLE IF EXISTS\s)'(\w+)'(?<=DROP\s)'(\w+)'|(?<=FROM\s)'\s(\w+)\s'|(?<=JOIN\s)'\s(\w+)\s'|(?<=INTO\s)'\s(\w+)\s'|(?<=UPDATE\s)'\s(\w+)\s'|(?<=TABLE\s)'\s(\w+)\s'|(?<=TABLE IF EXISTS\s)'\s(\w+)\s'(?<=DROP\s)'\s(\w+)\s'"
+        def replacequote(match):
+            return match.group(0).replace("'", "")
+
+        string = re.sub(pattern, replacequote, string, flags=re.IGNORECASE)
+
+
+        return string

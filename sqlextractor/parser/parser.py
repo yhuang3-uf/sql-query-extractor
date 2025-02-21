@@ -1,4 +1,5 @@
 import sqlite3
+import psycopg2 
 import sys
 
 class SqlSyntaxError(RuntimeError):
@@ -7,6 +8,21 @@ class SqlSyntaxError(RuntimeError):
     """
     def __init__(self) -> None:
         pass
+
+def check_valid_pglast_postgres(sql_query: str):
+    '''
+    Checks if query is valid by 1. Checking it passes parsing with `pglast` (check_valid_pglast) 2. If 1 is true, executing in PostgreSQL (check_valid_postgres)
+
+    Requires `pglast` and `psycopg2` to be installed
+
+    This function exists because 1. The pglast check is too broad (returns queries that will actually fail) and 2. The PostgreSQL execution check is too time consuming to run with each string
+
+    :return: True if SQL is valid, False if not
+    '''
+    if (check_valid_pglast(sql_query)):
+        return check_valid_postgres(sql_query)
+    else:
+        return False
 
 def check_valid_pglast(sql_query: str) -> bool:
     """
@@ -23,6 +39,43 @@ def check_valid_pglast(sql_query: str) -> bool:
         # Oops, parsing failed.
         return False
     return True
+
+def check_valid_postgres(sql_query: str) -> bool:
+    '''
+    Checks whether an SQL query has valid syntax by trying to execute it in a PostgreSQL docker instance
+
+    Requires `psycopg2` to be installed and postgres running in docker
+    To run postgres in docker: docker run --rm -d -p 5432:5432 --name temp_pg -e POSTGRES_PASSWORD=secret postgres
+    To stop postgres in docker: docker stop temp_pg
+
+    :return: True if SQL is valid, False if not
+    '''
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user="postgres",
+        password="secret",
+        host="localhost",
+        port="5432"
+    )
+
+    cursor = conn.cursor()
+    cursor.execute("DROP SCHEMA public CASCADE;")
+    cursor.execute("CREATE SCHEMA public;")
+
+    valid_query = False
+
+    try:
+        cursor.execute(sql_query)
+        valid_query = True
+    except psycopg2.errors.UndefinedTable as e:
+        valid_query = True
+    except Exception as e:
+        pass
+
+    conn.close()
+    cursor.close()
+
+    return valid_query
 
 def check_valid(sql_query: str) -> bool:
     """
